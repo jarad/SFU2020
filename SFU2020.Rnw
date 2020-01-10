@@ -1,0 +1,490 @@
+\documentclass[handout,10pt,aspectratio=43]{beamer}
+
+\usepackage{natbib}
+
+\usepackage{pdfpages}
+\usepackage[ruled,vlined,linesnumbered,resetcount]{algorithm2e}
+
+\usetheme{AnnArbor}
+\usecolortheme{beaver}
+
+\graphicspath{{include/}}
+
+\setlength{\unitlength}{\textwidth}  % measure in textwidths
+\usepackage[normalem]{ulem}
+
+% to avoid counting all pages
+\newcommand{\backupbegin}{
+   \newcounter{finalframe}
+   \setcounter{finalframe}{\value{framenumber}}
+}
+\newcommand{\backupend}{
+   \setcounter{framenumber}{\value{finalframe}}
+}
+
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{enumerate items}[default]
+\setbeamertemplate{enumerate subitem}{\alph{enumii}.}
+\setbeamertemplate{enumerate subsubitem}{\roman{enumiii}.}
+\setkeys{Gin}{width=0.6\textwidth}
+
+\newcommand{\I}{\mathrm{I}}
+\newcommand{\ind}{\stackrel{ind}{\sim}}
+\providecommand{\ov}[1]{\overline{#1}}
+
+\usefonttheme[onlymath]{serif} % uncomment for article style math
+
+\institute[ISU]{Iowa State University}
+\date{\today}
+
+\title[Sequential Knot Selection in Sparse GPs]{Sequential Knot Selection in Sparse Gaussian Processes}
+\author[Niemi, Garton, and Carriquiry]{Jarad Niemi, Nate Garton, and Alicia Carriquiry}
+
+
+
+<<options, results='hide', echo=FALSE, purl=FALSE>>=
+opts_chunk$set(comment=NA, 
+               fig.width=6, fig.height=5, 
+               size='tiny', 
+               out.width='0.8\\textwidth', 
+               fig.align='center', 
+               message = FALSE,
+               echo = FALSE,
+               cache = TRUE)
+options(width=120)
+@
+
+<<libraries, message=FALSE, warning=FALSE>>=
+library("tidyverse")
+library("mvtnorm")
+@
+
+<<set_seed, echo=FALSE>>=
+set.seed(20200109)
+@
+
+
+
+\begin{document}
+
+\begin{frame}
+\maketitle
+
+
+\vspace{0.2in}
+
+{\footnotesize
+Funded, in part, by 
+\begin{itemize}
+\item[-] the Center for Statistics and Applications in
+Forensic Evidence (CSAFE) \pause and 
+\item[-] the Iowa State University Presidential Interdisciplinary 
+Research Initiative on C-CHANGE: Science for a Changing Agriculture.
+\end{itemize}
+}
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Outline}
+\begin{itemize}
+\item Basics of Gaussian Processes (GPs)
+\item Sparse GPs using knots
+\item Knot selection
+\item One-at-a-time (OAT) selection
+\item Applications
+\end{itemize}
+\end{frame}
+
+
+\section{Basics of Gaussian Processes (GPs)}
+\begin{frame}
+\frametitle{Non-parametric regression}
+
+Suppose we have the model 
+\[ 
+y_i = f(x_i) + \epsilon_i
+\]
+\pause
+where 
+\begin{itemize}[<+->]
+\item response $y\in \mathbb{R}$ (for simplicity)
+\item input $x \in \mathcal{X} \subset \mathbb{R}^d$
+\item noise $\epsilon_i \ind N(0,\tau^2)$
+\item unknown $f:\mathcal{X} \to \mathbb{R}$
+\end{itemize}
+
+\vspace{0.2in} \pause 
+
+We observe pairs $\left(y_i,x_i^\top \right)$ for $i = 1,\ldots,N$ \pause
+and we are interested in inference on the unknown $f(\cdot)$. 
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Gaussian Process}
+
+Assume a Gaussian Process (GP) prior (Rasmussen and Williams, 2006) for $f$:
+
+\[ f(x) \sim \mathcal{GP}\left(m(x), k_\theta(x,x')\right)\]
+
+\pause 
+
+which assumes, for any finite subset
+\[
+f_x = \left[\begin{array}{c} f(x_1) \\ \vdots \\ f(x_M) \end{array}\right] \pause
+\sim \mathcal{N}_M(m_x, \Sigma_{xx})
+\]
+where $m_x = [m(x_1),\ldots, m(x_M)]^\top$ 
+\pause 
+and 
+\[
+\Sigma_{xx}(i,j) = k_\theta(x_i,x_j)
+\]
+for some kernel (covariance function)
+$k_\theta: \mathcal{X} \times \mathcal{X} \to \mathbb{R}$.
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Kernel}
+
+Kernel controls how smooth the process is both by determining:
+\begin{itemize}
+\item function differentiability and
+\item function wiggliness.
+\end{itemize}
+
+\vspace{0.2in}\pause
+
+As an example, the squared exponential (or Gaussian) kernel is 
+\[
+k_\theta(x_i,x_j) = \sigma^2 \exp\left( -\frac{1}{2} \frac{(x_i-x_j)^\top(x_i-x_j)}{\phi} \right)
+\]
+\pause
+where $\theta = (\sigma^2, \phi)$ is the kernel parameter.
+\pause
+This kernel is infinitely differentiable and $\phi$ controls how wiggly the
+function is.
+\end{frame}
+
+
+\begin{frame}
+\frametitle{}
+<<gp_sims>>=
+K <- function(x, log_par = c(0,0)) {
+  sigma = exp(log_par[1]); phi = exp(log_par[2])
+  d <- as.matrix(dist(matrix(x, ncol = 1), diag = TRUE, upper = TRUE))
+  sigma^2*exp(-d^2/2/phi)
+}
+
+sim_gp <- function(d) {
+  phi <- unique(d$phi);   stopifnot(length(phi) == 1)
+  sig <- unique(d$sigma); stopifnot(length(sig) == 1)
+  
+  n <- length(d$x)
+  cS <- chol(K(d$x, log_par = log(c(sig, phi))) + diag(n)*.Machine$double.eps*10^6)
+  
+  data.frame(x = d$x, f = t(cS) %*% rnorm(n))
+}
+
+d <- expand.grid(x = seq(0, 1, length.out = 1001),
+                 sigma = 10^c(-1,0,1),
+                 phi = 10^c(-2,-1,0), 
+                 replicate = 1:5) %>%
+  group_by(sigma, phi, replicate) %>%
+  do(sim_gp(.)) %>%
+  ungroup() %>%
+  mutate(replicate = as.factor(replicate),
+         sigma = paste("sigma=",sigma),
+         phi   = paste("phi=", phi))
+
+
+@
+
+<<dependson="gp_sims">>=
+ggplot(d, aes(x, f, color = replicate, group = )) +
+  geom_line() +
+  facet_grid(sigma ~ phi, scales = "free_y") +
+  scale_x_continuous(breaks = c(0,1)) + 
+  labs(title = "Gaussian Process Simulations (squared exponential kernel)") +
+  theme_bw() + 
+  theme(legend.position = "none")
+@
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Training a GP}
+
+Maximize the likelihood with respect to the parameters
+\[
+\hat{\theta} = \mbox{argmax}_\theta \, p(y|\theta) \pause
+= \mbox{argmax}_{\theta} \, N\left(y; 0, \Sigma(\theta)\right)
+\]
+\pause
+where
+\[
+\log \mathcal{N}(y; 0, \Sigma_\theta) = 
+C - \frac{1}{2}\log |\Sigma(\theta)| 
+-\frac{1}{2} y^\top \Sigma(\theta)^{-1} y 
+\]
+
+\vspace{0.2in} \pause
+
+If there are $N$ observations, $\Sigma(\theta)$ is an $N\times N$ 
+covariance matrix
+\pause
+and thus the computational time scales as $\mathcal{O}(N^3)$.
+
+\vspace{0.2in}
+
+This is doable if $N\approx 1,000$ but not when you start getting larger
+and larger data sets. 
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Predicting from a GP}
+
+Function estimation (prediction) from a GP is based on the following joint
+distribution:
+\[
+\left. \begin{array}{c} y \\ f_{x^*} \end{array} \right| \hat\theta \sim
+\left( \left[ \begin{array}{c} m_x \\ m_{x^*} \end{array}  \right],
+\left[ \begin{array}{ll} \Sigma_{xx} + \tau^2 \I & \Sigma_{xx^*} \\
+\Sigma_{x^*x} & \Sigma_{x^*x^*} \end{array}  \right] \right)
+\]
+\pause
+where
+\begin{itemize}
+\item $x^* = (x_1^*, \ldots, x_{N^*}^*)$ represents a set of prediction locations,
+\item $f_{x^*} = (f(x_1^*),\ldots,f(x_{N^*}^*))^\top$ represents a set of prediction values,
+\item $m_{x^*} = (m(x_1^*),\ldots,m(x_{N^*}^*))^\top$, 
+\item $\Sigma_{x^*x^*}(i,j) = k_{\hat\theta}(x_i^*,x_j^*)$, and
+\item $\Sigma_{xx^*}(i,j) = k_{\hat\theta}(x_i,x_j^*)$.
+\end{itemize}
+
+\vspace{0.1in} \pause
+
+Thus, the desired conditional distribution is 
+
+\[
+f_{x^*} \sim \mathcal{N}(\hat{m}_{x^*}, \hat\Sigma_{x^*x^*})
+\]
+\pause
+where
+\[ \begin{array}{ll}
+\hat{m}_{x^*} &= m_{x^*} + \Sigma_{x^*x}\left[\tau^2\I + \Sigma_{xx}\right]^{-1}(y-m_{x}) \\
+\hat\Sigma_{x^*x^*} &= \Sigma_{x^*x^*} - \Sigma_{x^*x}\left[\tau^2\I + \Sigma_{xx}\right]^{-1}\Sigma_{xx^*}.
+\end{array} \]
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Graphical representation}
+<<data, dependson="gp_sims">>=
+set.seed(20200109+8)
+
+# Parameters
+sig = 1
+phi = 0.1
+
+# Data
+x <- seq(0, 1, length = 1001)
+Sigmaxx = K(x, log_par=log(c(sig,phi)))
+truth <- sim_gp(data.frame(x=x, sigma = 1, phi = 0.1))
+
+n <- 5
+d <- truth %>% 
+  sample_n(n) %>%
+  mutate(y = f + rnorm(n, 0, 0.01))
+
+# Training
+log_like = function(log_par, y, x) {
+  n <- length(y)
+  dmvnorm(y, 
+          mean = rep(0,length(y)), 
+          sigma = K(x, log_par = log_par[-1]) + exp(log_par[1])*diag(n), 
+          log = TRUE)
+}
+train = optim(log(c(.01, 1, .1)), log_like, y = d$y, x = d$x, control = list(fnscale = -1))
+
+# Prediction
+ns = 101
+xs = seq(0, 1, length = ns)
+Sigma = K(c(d$x,xs), log_par = train$par[-1])
+
+Sigmaxx = Sigma[   1:n,     1:n]
+Sigmass = Sigma[-c(1:n), -c(1:n)]
+Sigmaxs = Sigma[   1:n,  -c(1:n)]
+
+inv = solve(exp(train$par[1])*diag(n) + Sigmaxx)
+hat_ms = t(Sigmaxs) %*% inv %*% d$y
+hat_Sigmass = Sigmass - t(Sigmaxs) %*% inv %*% Sigmaxs
+
+p <- data.frame(x = xs,
+                y = hat_ms,
+                lb = hat_ms - 2*sqrt(diag(hat_Sigmass)),
+                ub = hat_ms + 2*sqrt(diag(hat_Sigmass)))
+
+ggplot(p, aes(x = x)) + 
+  geom_ribbon(aes(ymin = lb, ymax = ub), fill = "gray", alpha = 0.5) + 
+  geom_line(aes(y = y), color = "gray") + 
+  geom_point(data = d, aes(x = x, y = y)) +
+  geom_line(data = truth, aes(x = x, y = f), color="blue") +
+  theme_bw()
+@
+\end{frame}
+
+
+
+
+\section{Sparse GPs using knots}
+\begin{frame}
+\frametitle{Sparse GP approximations}
+\begin{itemize}
+\item Knot-based approximations
+  \begin{itemize}
+  \item Fully Independent Conditional (FIC) \citep{seeger2003, candela2005, snelson2006, banerjee2008, finley2009, titsias2009, cao2013}
+  \item 
+  \end{itemize}
+\end{itemize}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Fully Independent Conditional (FIC) Approximation}
+
+Introduce a set of knots $x^{\dagger} = \left\{x_1^\dagger, \ldots, x_K^\dagger \right\}$,
+\pause
+such that 
+\[
+p(f_x,f_{x^{\dagger}}|\theta) = p(f_x|f_{x^{\dagger}}, \theta)p(f_{x^{\dagger}}|\theta).
+\]
+\pause
+where
+\[ \begin{array}{rl}
+f_x| f_{x^{\dagger}} , \theta  &\sim  \mathcal{N}\left( m_x + \Sigma_{xx^{\dagger}} \Sigma_{x^{\dagger}x^{\dagger}}^{-1}(f_{x^{\dagger}} - m_{x^{\dagger}}) , \Lambda \right)  \pause \\
+f_{x^{\dagger}}| \theta &\sim  \mathcal{N}(m_{x^{\dagger}}, \Sigma_{x^{\dagger}x^{\dagger}}) 
+\end{array} \]
+\pause
+with $\Lambda = \text{diag}\left(\Sigma_{xx} - \Sigma_{x x^{\dagger}} \Sigma_{x^{\dagger}x^{\dagger}}^{-1} \Sigma_{x^{\dagger}x}\right)$.
+
+\vspace{0.2in} \pause
+
+This joint implies the following marginal distribution for $f_x$:
+\[
+f_x| \theta \sim \mathcal{N}(m_{x}, \Lambda + \Sigma_{x x^{\dagger}} \Sigma_{x^{\dagger}x^{\dagger}}^{-1} \Sigma_{x^{\dagger}x})
+\]
+\pause
+which has the correct marginal means and covariances, \pause
+but the covariances are controlled by the knots.
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Train FIC Model}
+
+Let $\Psi_{xx} \equiv \Lambda(\theta) + \Sigma_{x x^{\dagger}}(\theta) \Sigma_{x^{\dagger}x^{\dagger}}(\theta)^{-1}\Sigma_{x^{\dagger}x}(\theta)$,
+\pause
+then
+\[
+Y|x^{\dagger}, \theta\sim \mathcal{N}(m_{x}, \tau^2I + \Psi_{xx}).
+\]
+
+\vspace{0.2in} \pause
+
+Train the model by finding
+\[
+\hat{x}^\dagger,\hat\theta = \mbox{argmax}_{x^\dagger,\theta} \mathcal{N}(y, m_x, \tau^2I + \Psi_{xx}(\theta)).
+\]
+
+\end{frame}
+
+
+
+
+\section{Knot selection}
+
+\section{One-at-a-time (OAT) selection}
+\begin{frame}
+\frametitle{Knot selection algorithm}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\textbf{Initialize:} $x^{\dagger} = \{x^{\dagger}_i \}_{i = 1}^{K_{I}}$ \;
+$\hat{\theta} = \mbox{argmax}_{\theta} p(y|x, x^{\dagger}, \theta)$ \;
+\Repeat{$|x^{\dagger}| = K_{max}$ or convergence}{
+propose new knot $x^{\dagger^*} \leftarrow J(y , x, x^{\dagger}, \hat{\theta})$ \;
+$(\hat{x}^{\dagger^*}, \hat{\theta}) = \mbox{argmax}_{(x^{\dagger^*}, \theta)} p(y|x, \{x^{\dagger}, x^{\dagger^*}\}, \theta)$ \;
+$x^{\dagger} = \{x^{\dagger}, \hat{x}^{\dagger^*}\}$ \;
+}
+\caption{OAT knot selection algorithm. Convergence in the repeat loop is declared when the change in the objective function, the log-marginal likelihood, falls below a threshold. Set 
+initial number of knots ($K_I$).}
+\label{a:oat}
+\end{algorithm}
+
+\end{frame}
+
+
+
+
+
+
+
+\begin{frame}
+\frametitle{Knot proposal algorithm}
+
+{\small
+\begin{algorithm}[H]
+\SetAlgoLined
+set the mean of the meta GP equal to 
+$\log p\left(y\left|x,\left\{x^{\dagger},\cdot\right\}, \hat{\theta}\right.\right)$ \;
+sample $x_1^\dagger, ..., x^\dagger_{T_{min}}$ without replacement from $x$ \;
+% $\{ x_i \}_{i = 1}^{n}$ \;
+
+% $z \leftarrow \{z_1, ..., z_{T_{min}} \} \cup x^{\dagger} $ \;
+augment known marginal likelihood values 
+$w_j = \log p\left(y\left|x,\left\{x^{\dagger},x^{\dagger}_j\right\}, \hat{\theta}\right.\right)$ for $j=1,\ldots,k$ 
+with evaluations of the marginal likelihood at the new knots, 
+that is $w_{k+j} = \log p\left(y\left|x, \left\{x^{\dagger},x^\dagger_j\right\}, \hat{\theta}\right.\right)$ for $j = 1,...,T_{min}$ \;
+% $t \leftarrow T_{min}$ \;
+% \jarad{don't need to set this here because it is set in the loop}
+\For{$t = T_{min}+1, ..., T_{max}$}{
+update covariance parameters in meta GP \;
+$x^*_t = \mbox{argmax}_{z \in x \setminus \{x^{\dagger}_l\}_{l = 1}^{t - 1} } \alpha\left(z;w,\left\{x_1^\dagger,\ldots,x_{t-1}^\dagger\right\}\right)$ \;
+$w_t = \log p\left(y\left|x, \left\{x^{\dagger}, x^*_t \right\}, \hat{\theta}\right.\right)$ \;
+}
+return $x_j^*$ such that $j=\mbox{argmax}_t \, w_t$
+\caption{Knot proposal algorithm.
+Set the minimum ($T_{min}$) and maximum ($T_{max}$) number of marginal
+likelihood evaluations.
+}
+\label{a:oat_proposal}
+\end{algorithm}
+}
+\end{frame}
+
+\section{Applications}
+
+
+\begin{frame}
+\tiny
+\bibliography{references}
+\bibliographystyle{plainnat}
+\end{frame}
+
+\end{document}
+

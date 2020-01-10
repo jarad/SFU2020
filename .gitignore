@@ -37,3 +37,14 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+# LaTeX auxiliary files
+*.aux
+*.out
+*.nav
+*.toc
+*.snm
+*.tex
+*.log
+*.synctex.gz
+*.bbl
