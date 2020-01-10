@@ -48,3 +48,7 @@ vignettes/*.pdf
 *.log
 *.synctex.gz
 *.bbl
+.Rproj.user
+
+# Mac auxiliary files
+.DS_Store

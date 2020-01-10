@@ -72,7 +72,7 @@ set.seed(20200109)
 \maketitle
 
 
-\vspace{0.2in}
+\vspace{0.2in} \pause
 
 {\footnotesize
 Funded, in part, by 
@@ -112,8 +112,8 @@ y_i = f(x_i) + \epsilon_i
 \pause
 where 
 \begin{itemize}[<+->]
-\item response $y\in \mathbb{R}$ (for simplicity)
-\item input $x \in \mathcal{X} \subset \mathbb{R}^d$
+\item response $y_i \in \mathbb{R}$ (for simplicity)
+\item input $x_i \in \mathcal{X} \subset \mathbb{R}^d$
 \item noise $\epsilon_i \ind N(0,\tau^2)$
 \item unknown $f:\mathcal{X} \to \mathbb{R}$
 \end{itemize}
@@ -136,7 +136,7 @@ Assume a Gaussian Process (GP) prior (Rasmussen and Williams, 2006) for $f$:
 
 \pause 
 
-which assumes, for any finite subset
+which assumes, for any finite subset,
 \[
 f_x = \left[\begin{array}{c} f(x_1) \\ \vdots \\ f(x_M) \end{array}\right] \pause
 \sim \mathcal{N}_M(m_x, \Sigma_{xx})
@@ -224,7 +224,9 @@ ggplot(d, aes(x, f, color = replicate, group = )) +
 \begin{frame}
 \frametitle{Training a GP}
 
-Maximize the likelihood with respect to the parameters
+Find the maximum likelihood estimator (MLE) for $\theta$, 
+\pause
+i.e. (for simplicity we've set $m_x = 0$)
 \[
 \hat{\theta} = \mbox{argmax}_\theta \, p(y|\theta) \pause
 = \mbox{argmax}_{\theta} \, N\left(y; 0, \Sigma(\theta)\right)
@@ -236,18 +238,6 @@ where
 C - \frac{1}{2}\log |\Sigma(\theta)| 
 -\frac{1}{2} y^\top \Sigma(\theta)^{-1} y 
 \]
-
-\vspace{0.2in} \pause
-
-If there are $N$ observations, $\Sigma(\theta)$ is an $N\times N$ 
-covariance matrix
-\pause
-and thus the computational time scales as $\mathcal{O}(N^3)$.
-
-\vspace{0.2in}
-
-This is doable if $N\approx 1,000$ but not when you start getting larger
-and larger data sets. 
 \end{frame}
 
 
@@ -349,18 +339,38 @@ ggplot(p, aes(x = x)) +
 
 
 
-
 \section{Sparse GPs using knots}
 \begin{frame}
-\frametitle{Sparse GP approximations}
-\begin{itemize}
-\item Knot-based approximations
-  \begin{itemize}
-  \item Fully Independent Conditional (FIC) \citep{seeger2003, candela2005, snelson2006, banerjee2008, finley2009, titsias2009, cao2013}
-  \item 
-  \end{itemize}
-\end{itemize}
+\frametitle{Training a GP - revisited}
+
+Maximize the likelihood with respect to the parameters
+\[
+\hat{\theta} = \mbox{argmax}_\theta \, p(y|\theta) \pause
+= \mbox{argmax}_{\theta} \, N\left(y; 0, \Sigma(\theta)\right)
+\]
+
+where
+\[
+\log \mathcal{N}(y; 0, \Sigma_\theta) = 
+C - \frac{1}{2}\log |\Sigma(\theta)| 
+-\frac{1}{2} y^\top \Sigma(\theta)^{-1} y 
+\]
+
+\vspace{0.2in} \pause
+
+If there are $N$ observations, $\Sigma(\theta)$ is an $N\times N$ 
+covariance matrix
+\pause
+and thus the computational time scales as $\mathcal{O}(N^3)$.
+
+\vspace{0.2in}
+
+This is doable if $N\approx 1,000$ but not when you start getting larger
+and larger data sets. 
 \end{frame}
+
+
+
 
 
 
@@ -391,6 +401,13 @@ f_x| \theta \sim \mathcal{N}(m_{x}, \Lambda + \Sigma_{x x^{\dagger}} \Sigma_{x^{
 \pause
 which has the correct marginal means and covariances, \pause
 but the covariances are controlled by the knots.
+
+\vspace{0.1in} \pause 
+
+{\tiny 
+\citep{seeger2003, candela2005, snelson2006, banerjee2008, finley2009, titsias2009, cao2013}
+}
+
 \end{frame}
 
 
@@ -401,7 +418,7 @@ Let $\Psi_{xx} \equiv \Lambda(\theta) + \Sigma_{x x^{\dagger}}(\theta) \Sigma_{x
 \pause
 then
 \[
-Y|x^{\dagger}, \theta\sim \mathcal{N}(m_{x}, \tau^2I + \Psi_{xx}).
+Y|x^{\dagger}, \theta\sim \mathcal{N}(m_{x}, \tau^2\I + \Psi_{xx}).
 \]
 
 \vspace{0.2in} \pause
@@ -411,8 +428,30 @@ Train the model by finding
 \hat{x}^\dagger,\hat\theta = \mbox{argmax}_{x^\dagger,\theta} \mathcal{N}(y, m_x, \tau^2I + \Psi_{xx}(\theta)).
 \]
 
+\vspace{0.2in} \pause
+
+Appealing due to similarity with Full GP MLE approach, \pause
+but there are a number of questions:
+\begin{itemize}
+\item how many knots are needed?
+\item where should we initialize the knots?
+\item when do we stop our iterative optimization algorithm?
+\end{itemize}
 \end{frame}
 
+
+
+\begin{frame}
+\frametitle{Simultaneous knot optimization}
+\setkeys{Gin}{width=0.9\textwidth}
+\includegraphics{normal_example}
+\end{frame}
+
+\begin{frame}
+\frametitle{Adding another knot}
+\setkeys{Gin}{width=0.9\textwidth}
+\includegraphics{normal_marginal_ll}
+\end{frame}
 
 
 
@@ -441,6 +480,17 @@ initial number of knots ($K_I$).}
 
 
 
+\begin{frame}
+\frametitle{Expected improvement}
+
+\citep[see][for more examples of acquisition functions]{jones2001, shahriari2016}
+
+
+<<>>=
+x = c(1.1,2.7,5.3,7.7,7.9)
+
+@
+\end{frame}
 
 
 
