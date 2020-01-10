@@ -354,14 +354,14 @@ ggplot(p, aes(x = x)) +
 \frametitle{Training a GP - revisited}
 
 Find the maximum likelihood estimator (MLE) for $\theta = (\tau^2,\sigma^2,\phi)$,
-\pause
+
 \[
-\hat{\theta} = \mbox{argmax}_\theta \, p(y|\theta) \pause
+\hat{\theta} = \mbox{argmax}_\theta \, p(y|\theta) 
 = \mbox{argmax}_{\theta} \, N\left(y; m_x, \tau^2\I + \Sigma(\theta)\right)
 \]
-\pause
+
 where $y=(y_1,\ldots,y_N)$.
-\pause
+
 The log-likelihood is
 \[ \begin{array}{rl}
 \log \mathcal{N}(y; m_x, \tau^2\I+\Sigma_\theta) = & C \\
@@ -390,7 +390,7 @@ and larger data sets.
 \begin{frame}
 \frametitle{Fully Independent Conditional (FIC) Approximation}
 
-Introduce a set of knots $x^{\dagger} = \left\{x_1^\dagger, \ldots, x_K^\dagger \right\}$,
+Introduce a set of knots $x^{\dagger} = \left\{x_1^\dagger, \ldots, x_K^\dagger \right\}$ with $K<<N$,
 \pause
 such that 
 \[
@@ -440,10 +440,12 @@ Train the model by finding
 \[
 \hat{x}^\dagger,\hat\theta = \mbox{argmax}_{x^\dagger,\theta} \mathcal{N}(y; m_x, \tau^2I + \Psi_{xx}).
 \]
-
+\pause
+which has computational complexity of $\mathcal{O}(NK^2)$.
 \vspace{0.2in} \pause
 
-Appealing due to similarity with Full GP MLE approach, \pause
+Appealing due to similarity with Full GP MLE approach and massively reduced
+computational complexity, \pause
 but there are a number of questions:
 \begin{itemize}
 \item how many knots are needed?
@@ -498,19 +500,23 @@ $x^{\dagger} = \{x^{\dagger}, \hat{x}^{\dagger^*}\}$ \;
 
 Let 
 \begin{itemize}
-\item $w_{1:t-1}$ be the vector of log-marginal likelihood values at the candidates for the knot proposal which have thus far been explored at time $t$
-\item $w^{+} = \max(w_{1:t-1})$
+\item $w_{1:t-1}$ be the vector of log-marginal likelihood values at the candidates for the knot proposal which have thus far been explored at time $t$ and
+\item $w^{+} = \max(w_{1:t-1})$.
 \end{itemize}
 
 \vspace{0.1in} \pause
 
-Let $W(z)$ be the unknown marginal likelihood at input location $z$, 
-\pause
-then expected improvement is 
+Let $W(z)$ be the unknown marginal likelihood at input location $z$ and
+model it using a GP, for clarity call this the \alert{meta GP}.
+
+\vspace{0.2in} \pause
+
+Then expected improvement is 
 {\small
 \[
 \begin{array}{ll}
-\alpha \left(z;w_{1:t-1}, \left\{x_1^\dagger,\ldots,x_{t-1}^\dagger\right\} \right) 
+% \alpha \left(z;w_{1:t-1}, \left\{x_1^\dagger,\ldots,x_{t-1}^\dagger\right\} \right) 
+E[\max(W(z)-w^+,0)]
 = & (E\left[W(z)|w_{1:t-1}\right] - w^{+})\Phi\left(\frac{E\left[W(z)|w_{1:t-1}\right] - w^{+}}{\sqrt{ V\left[W(z)|w_{1:t-1} \right] } } \right) \\
 & + \sqrt{ V\left[W(z)|w_{1:t-1}\right] }\phi \left(\frac{E\left[W(z)|w_{1:t-1}\right] - w^{+}}{\sqrt{ V\left[W(z)|w_{1:t-1}\right] } } \right).
 \end{array}
@@ -518,11 +524,7 @@ then expected improvement is
 }
 where $\phi$ and $\Phi$ are the pdf and cdf of a standard normal, respectively.
 
-\vspace{0.2in} \pause
-
-We will model the unknown marginal likelihood $W(z)$ using a \alert{meta GP}.
-
-\vspace{0.2in} \pause
+\vspace{0.1in} \pause
 
 {\tiny
 \citep{jones2001, shahriari2016}
@@ -546,20 +548,20 @@ likelihood evaluations.
 \SetAlgoLined
 set the mean of the meta GP equal to 
 $\log p\left(y\left|x,\left\{x^{\dagger},\cdot\right\}, \hat{\theta}\right.\right)$ \pause \;
-sample $x_1^\dagger, ..., x^\dagger_{T_{min}}$ without replacement from $x$ \;
+sample $x_1^\dagger, ..., x^\dagger_{T_{min}}$ without replacement from $x$ \pause \;
 % $\{ x_i \}_{i = 1}^{n}$ \;
 
 % $z \leftarrow \{z_1, ..., z_{T_{min}} \} \cup x^{\dagger} $ \;
 augment known marginal likelihood values 
 $w_j = \log p\left(y\left|x,\left\{x^{\dagger},x^{\dagger}_j\right\}, \hat{\theta}\right.\right)$ for $j=1,\ldots,k$ 
 with evaluations of the marginal likelihood at the new knots, 
-that is $w_{k+j} = \log p\left(y\left|x, \left\{x^{\dagger},x^\dagger_j\right\}, \hat{\theta}\right.\right)$ for $j = 1,...,T_{min}$ \;
+that is $w_{k+j} = \log p\left(y\left|x, \left\{x^{\dagger},x^\dagger_j\right\}, \hat{\theta}\right.\right)$ for $j = 1,...,T_{min}$ \pause \;
 % $t \leftarrow T_{min}$ \;
 % \jarad{don't need to set this here because it is set in the loop}
 \For{$t = T_{min}+1, ..., T_{max}$}{
-update covariance parameters in meta GP \;
-$x^*_t = \mbox{argmax}_{z \in x \setminus \{x^{\dagger}_l\}_{l = 1}^{t - 1} } \alpha\left(z;w,\left\{x_1^\dagger,\ldots,x_{t-1}^\dagger\right\}\right)$ \;
-$w_t = \log p\left(y\left|x, \left\{x^{\dagger}, x^*_t \right\}, \hat{\theta}\right.\right)$ \;
+update covariance parameters in meta GP \pause \;
+$x^*_t = \mbox{argmax}_{z \in x \setminus \{x^{\dagger}_l\}_{l = 1}^{t - 1} } \alpha\left(z;w,\left\{x_1^\dagger,\ldots,x_{t-1}^\dagger\right\}\right)$ \pause \;
+$w_t = \log p\left(y\left|x, \left\{x^{\dagger}, x^*_t \right\}, \hat{\theta}\right.\right)$ \pause \;
 }
 return $x_j^*$ such that $j=\mbox{argmax}_t \, w_t$
 \end{algorithm}
@@ -578,7 +580,7 @@ initial number of knots ($K_I$).
 \textbf{Initialize:} $x^{\dagger} = \{x^{\dagger}_i \}_{i = 1}^{K_{I}}$  \;
 $\hat{\theta} = \mbox{argmax}_{\theta} p(y|x, x^{\dagger}, \theta)$  \;
 \Repeat{$|x^{\dagger}| = K_{max}$ or convergence}{
-propose new knot $x^{\dagger^*} \leftarrow J(y , x, x^{\dagger}, \hat{\theta})$ \pause \;
+propose new knot $x^{\dagger^*} \leftarrow J(y , x, x^{\dagger}, \hat{\theta})$ \;
 $(\hat{x}^{\dagger^*}, \hat{\theta}) = \mbox{argmax}_{(x^{\dagger^*}, \theta)} p(y|x, \{x^{\dagger}, x^{\dagger^*}\}, \theta)$ \;
 $x^{\dagger} = \{x^{\dagger}, \hat{x}^{\dagger^*}\}$ \;
 }
@@ -627,7 +629,6 @@ Simult. & Random & 13 & 0.247 & 88 & 140 & -308.071\\
 
 
 \section{Applications}
-\subsection{Performance metrics}
 \begin{frame}
 \frametitle{Performance metrics}
 
@@ -722,14 +723,15 @@ Simult. & 6219 & -- & 50 & 0.069 & 3.265\\
 
 One-at-a-time (OAT) knot selection
 \begin{itemize}
+\item Automatically selects the number of knots
 \item Similar predictive performance to simultaneous knot selection
 \item Better represents full GP compared to simultaneous knot selection
-\item Better computational efficiency than simultaneous knot selection
+\item Reduced runtimes compared to simultaneous knot selection
 \end{itemize}
 
 \vspace{0.1in}
 
-This slides are available 
+These slides are available at
 \begin{itemize}
 \item \url{https://github.com/jarad/SFU2020}
 \item \url{http://www.jarad.me/research/presentations.html}
@@ -751,11 +753,11 @@ Other links:
 \end{itemize}
 \end{frame}
 
-
-
+\appendix
+\backupbegin
 
 \begin{frame}
-\frametitle{Reference}
+\frametitle{References}
 \scriptsize
 \bibliography{references}
 \bibliographystyle{plainnat}
